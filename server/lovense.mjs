@@ -78,6 +78,7 @@ export async function init(router) {
                 });
 
                 proxyRes.on('end', () => {
+                    if (res.headersSent) return;
                     try {
                         const jsonData = JSON.parse(data);
                         res.json(jsonData);
@@ -91,6 +92,7 @@ export async function init(router) {
             proxyReq.on('timeout', () => {
                 proxyReq.destroy();
                 console.error('[Lovense] Request timed out');
+                if (res.headersSent) return;
                 res.status(504).json({
                     error: 'Connection to Lovense device timed out',
                     details: 'The device did not respond within 10 seconds. Make sure the Lovense app is open and on the same network.',
@@ -99,6 +101,7 @@ export async function init(router) {
 
             proxyReq.on('error', (error) => {
                 console.error('[Lovense] Proxy request error:', error);
+                if (res.headersSent) return;
                 res.status(500).json({
                     error: 'Failed to connect to Lovense device',
                     details: error.message,
