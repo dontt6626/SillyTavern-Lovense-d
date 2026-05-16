@@ -43,7 +43,7 @@ export async function init(router) {
      * This allows bypassing CORS and self-signed certificate issues
      */
     router.post('/command', async (req, res) => {
-        const { url, ...commandData } = req.body;
+        const { url, method = 'POST', ...payload } = req.body;
 
         if (!url) {
             return res.status(400).json({ error: 'URL is required' });
@@ -51,24 +51,28 @@ export async function init(router) {
 
         try {
             const urlObj = new URL(url);
-            const postData = JSON.stringify(commandData);
+            const requestMethod = (method || 'POST').toUpperCase();
             const isHttps = urlObj.protocol === 'https:';
             const transport = isHttps ? https : http;
 
             const options = {
                 hostname: urlObj.hostname,
                 port: urlObj.port || (isHttps ? 443 : 80),
-                path: urlObj.pathname,
-                method: 'POST',
+                path: urlObj.pathname + urlObj.search,
+                method: requestMethod,
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(postData),
                     'X-platform': 'SillyTavern',
                 },
                 agent: isHttps ? lovenseHttpsAgent : lovenseHttpAgent,
-                // Connection timeout (10 seconds)
                 timeout: 10000,
             };
+
+            let postData;
+            if (requestMethod === 'POST' && Object.keys(payload).length > 0) {
+                postData = JSON.stringify(payload);
+                options.headers['Content-Type'] = 'application/json';
+                options.headers['Content-Length'] = Buffer.byteLength(postData);
+            }
 
             const proxyReq = transport.request(options, (proxyRes) => {
                 let data = '';
@@ -80,11 +84,14 @@ export async function init(router) {
                 proxyRes.on('end', () => {
                     if (res.headersSent) return;
                     try {
+                        if (!data || !data.trim()) {
+                            return res.status(502).json({ error: 'Empty response from Lovense device' });
+                        }
                         const jsonData = JSON.parse(data);
                         res.json(jsonData);
                     } catch (error) {
-                        console.error('[Lovense] Failed to parse response:', error);
-                        res.status(500).json({ error: 'Invalid response from Lovense device' });
+                        console.error('[Lovense] Failed to parse response:', error, 'Data:', data);
+                        res.status(500).json({ error: 'Invalid response from Lovense device', raw: data });
                     }
                 });
             });
@@ -108,7 +115,9 @@ export async function init(router) {
                 });
             });
 
-            proxyReq.write(postData);
+            if (postData) {
+                proxyReq.write(postData);
+            }
             proxyReq.end();
         } catch (error) {
             console.error('[Lovense] Error:', error);

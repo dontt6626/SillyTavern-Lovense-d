@@ -106,7 +106,7 @@ async function checkConnection() {
     const settings = extension_settings[MODULE_NAME];
     const protocol = getLovenseProtocol(settings.local_port);
     const host = formatLovenseHost(settings.local_ip);
-    const lovenseUrl = `${protocol}://${host}:${settings.local_port}/command`;
+    const lovenseUrl = `${protocol}://${host}:${settings.local_port}/GetToys`;
 
     try {
         // Use SillyTavern's proxy to avoid CORS issues with self-signed certificates
@@ -115,7 +115,7 @@ async function checkConnection() {
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 url: lovenseUrl,
-                command: 'GetToys',
+                method: 'GET',
             }),
         });
 
@@ -1008,7 +1008,8 @@ function stopConnectionChecking() {
  */
 jQuery(async () => {
     // Load settings HTML manually since we're in data/default-user/extensions
-    const settingsResponse = await fetch('/scripts/extensions/third-party/SillyTavern-Lovense/settings.html');
+    const extensionPath = new URL('.', import.meta.url).pathname;
+    const settingsResponse = await fetch(`${extensionPath}settings.html`);
     const settingsHtml = await settingsResponse.text();
     $('#extensions_settings2').append(settingsHtml);
 
