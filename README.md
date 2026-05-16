@@ -15,6 +15,15 @@ You're welcome.
 [![My Discord](https://img.shields.io/badge/Discord-Join%20Server-7289da)](https://discord.com/invite/KdAkTg94ME)
 [![Support Me](https://img.shields.io/badge/Ko--fi-Support%20Creator-ff5e5b)](https://ko-fi.com/marinara_spaghetti)
 
+## 🔧 Recent Fixes in This Fork
+
+This fork includes the following fixes over the original:
+
+1. **Fixed extension loading for forks** — The settings HTML no longer relies on a hardcoded `SillyTavern-Lovense` path. It now resolves dynamically, so the extension loads correctly regardless of the repository name.
+2. **Fixed "Check Connection" always failing** — The Lovense Local API requires `GET /GetToys`, not `POST /command`. The connection check now uses the correct HTTP method and endpoint.
+3. **Updated server proxy to support GET requests** — The proxy (`lovense.mjs`) previously only supported POST. It now forwards both GET (for discovery) and POST (for commands) correctly.
+4. **Added empty response handling** — If the Lovense app returns an empty body, the proxy now returns a clean 502 error instead of crashing with an unhandled JSON parse exception.
+
 ## 📥 Installation
 
 ### 1. Install the Extension
@@ -196,6 +205,18 @@ All Lovense devices supported by the Lovense Remote app:
 - And more
 
 ## � Troubleshooting
+
+### Extension UI does not appear / Settings panel is blank
+
+**Cause:** The original code hardcoded the fetch path to `/scripts/extensions/third-party/SillyTavern-Lovense/settings.html`. If your extension folder is named anything else (e.g., a fork with `-d` suffix), this 404s and the UI never loads.
+
+**Fix (already applied in this fork):** The path is now resolved dynamically using `import.meta.url`. If you are using the original repo, rename your extension folder to exactly `SillyTavern-Lovense`, or switch to this fork.
+
+### "Check Connection" always fails even though Lovense Remote is running
+
+**Cause:** The original code sent a `POST` request to `/command` with `command: 'GetToys'`. The Lovense Local API expects `GET /GetToys`, so the app rejects the request.
+
+**Fix (already applied in this fork):** The connection check now sends `GET /GetToys` through the proxy. If you are using the original repo, there is no workaround besides patching the code.
 
 ### "Not Connected" Status / HTTP 404 Error
 
