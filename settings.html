@@ -1,6 +1,6 @@
 <div class="inline-drawer">
     <div class="inline-drawer-toggle inline-drawer-header">
-        <b>Lovense Control <span style="font-size: 0.8em; opacity: 0.7;">v1.1</span></b>
+        <b>Lovense Control <span style="font-size: 0.8em; opacity: 0.7;">v1.2</span></b>
         <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
     </div>
     <div class="inline-drawer-content">
@@ -15,8 +15,27 @@
                 When enabled, the AI will be able to control your Lovense device during chats. Happy gooning!
             </small>
 
+            <!-- Connection Mode Selector -->
+            <div id="lovense_mode_section" style="margin-top: 10px;">
+                <h4 style="margin-top: 10px; margin-bottom: 5px;">Connection Mode</h4>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <label class="checkbox_label" style="flex: 1;">
+                        <input type="radio" name="lovense_mode" value="lovense-remote" checked />
+                        <span><i class="fa-solid fa-mobile-screen"></i> Lovense Remote App</span>
+                    </label>
+                    <label class="checkbox_label" style="flex: 1;">
+                        <input type="radio" name="lovense_mode" value="intiface" />
+                        <span><i class="fa-solid fa-plug"></i> Intiface / Buttplug</span>
+                    </label>
+                </div>
+                <small class="notes">
+                    <strong>Lovense Remote</strong>: Uses the Lovense Remote app local API. Requires the app running on PC or phone.
+                    <br><strong>Intiface</strong>: Uses Intiface Central (Buttplug) for broader device support (Lovense, We-Vibe, Kiiroo, etc.).
+                </small>
+            </div>
+
             <!-- Setup Instructions -->
-            <div class="lovense_setup_instructions">
+            <div id="lovense_setup_instructions" class="lovense_setup_instructions">
                 <h4 style="margin-top: 10px; margin-bottom: 5px;">Setup Instructions</h4>
 
                 <div class="lovense_setup_tabs">
@@ -41,7 +60,7 @@
                             <li>Download <a href="https://apps.apple.com/app/lovense-remote/id1273067916" target="_blank">Lovense Remote</a> (iOS) or <a href="https://play.google.com/store/apps/details?id=com.lovense.remote" target="_blank">Android</a></li>
                             <li>Open Lovense Remote and pair your device via Bluetooth</li>
                             <li>Make sure your phone and PC are on the <strong>same WiFi network</strong></li>
-                            <li>In Lovense Remote, go to <strong>Discover → Game Mode → Turn on "Enable LAN"</strong></li>
+                            <li>In Lovense Remote, go to <strong>Discover &rarr; Game Mode &rarr; Turn on "Enable LAN"</strong></li>
                             <li>In the Game Mode tab, find the local IP (e.g., "192-168-1-44.lovense.club")</li>
                             <li>Enter that IP in "Advanced Connection Settings" below</li>
                             <li>Click "Check Connection"</li>
@@ -50,7 +69,6 @@
                         </ol>
                         <p style="margin-top: 10px;"><strong>If you see Status: Connected, you're good to go!</strong></p>
                     </details>
-                </div>
                 </div>
             </div>
 
@@ -71,33 +89,47 @@
                     <ul id="lovense_toy_list" class="lovense_toy_list"></ul>
                 </div>
 
-                <div class="lovense_advanced_settings" style="margin-top: 10px;">
-                    <details>
-                        <summary><strong>Advanced Connection Settings</strong></summary>
-                        <div style="padding: 10px 0;">
-                            <label for="lovense_local_ip" style="margin-bottom: 3px;">
-                                <b>Local IP Address</b>
-                            </label>
-                            <input type="text" id="lovense_local_ip" class="text_pole" value="127.0.0.1" placeholder="e.g. 192.168.1.44" />
-                            <small class="notes">
-                                <strong>PC:</strong> <code>127.0.0.1</code> (default, app running on this computer)<br>
-                                <strong>Mobile:</strong> Your phone's local IP from Lovense Remote → Game Mode (e.g., <code>192.168.1.44</code>)
-                            </small>
+                <!-- Intiface Settings -->
+                <div id="lovense_intiface_section" style="display: none; margin-top: 10px;">
+                    <label for="lovense_intiface_url" style="margin-bottom: 3px;">
+                        <b>Intiface Server URL</b>
+                    </label>
+                    <input type="text" id="lovense_intiface_url" class="text_pole" value="ws://localhost:12345" placeholder="ws://localhost:12345" />
+                    <small class="notes">
+                        Default Intiface Central WebSocket URL. Start Intiface Central and leave it running.
+                    </small>
+                </div>
 
-                            <label for="lovense_local_port" style="margin-top: 10px; margin-bottom: 3px;">
-                                <b>Local Port</b>
-                            </label>
-                            <input type="text" id="lovense_local_port" class="text_pole" value="30010" />
-                            <small class="notes">
-                                <strong>PC:</strong> <code>30010</code> (HTTPS, default)<br>
-                                <strong>Mobile:</strong> <code>20010</code> (HTTP) or as shown in app Game Mode settings
-                            </small>
+                <!-- Lovense Remote Settings -->
+                <div id="lovense_lovense_section" style="margin-top: 10px;">
+                    <div class="lovense_advanced_settings">
+                        <details>
+                            <summary><strong>Advanced Connection Settings</strong></summary>
+                            <div style="padding: 10px 0;">
+                                <label for="lovense_local_ip" style="margin-bottom: 3px;">
+                                    <b>Local IP Address</b>
+                                </label>
+                                <input type="text" id="lovense_local_ip" class="text_pole" value="127.0.0.1" placeholder="e.g. 192.168.1.44" />
+                                <small class="notes">
+                                    <strong>PC:</strong> <code>127.0.0.1</code> (default, app running on this computer)<br>
+                                    <strong>Mobile:</strong> Your phone's local IP from Lovense Remote &rarr; Game Mode (e.g., <code>192.168.1.44</code>)
+                                </small>
+
+                                <label for="lovense_local_port" style="margin-top: 10px; margin-bottom: 3px;">
+                                    <b>Local Port</b>
+                                </label>
+                                <input type="text" id="lovense_local_port" class="text_pole" value="30010" />
+                                <small class="notes">
+                                    <strong>PC:</strong> <code>30010</code> (HTTPS, default)<br>
+                                    <strong>Mobile:</strong> <code>20010</code> (HTTP) or as shown in app Game Mode settings
+                                </small>
                             </div>
                         </details>
                     </div>
                 </div>
+            </div>
 
-<!-- Guidelines Settings -->
+            <!-- Guidelines Settings -->
             <div id="lovense_guidelines_section" style="margin-top: 10px;">
                 <h4 style="margin-top: 10px; margin-bottom: 5px;">AI Guidelines</h4>
 

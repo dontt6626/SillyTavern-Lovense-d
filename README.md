@@ -23,6 +23,7 @@ This fork includes the following fixes over the original:
 2. **Fixed "Check Connection" always failing** — The Lovense Local API requires `GET /GetToys`, not `POST /command`. The connection check now uses the correct HTTP method and endpoint.
 3. **Updated server proxy to support GET requests** — The proxy (`lovense.mjs`) previously only supported POST. It now forwards both GET (for discovery) and POST (for commands) correctly.
 4. **Added empty response handling** — If the Lovense app returns an empty body, the proxy now returns a clean 502 error instead of crashing with an unhandled JSON parse exception.
+5. **Added Intiface / Buttplug support** — New connection mode that bypasses the Lovense Remote app entirely. Connect directly to Intiface Central (or any Buttplug server) via WebSocket for broader device support and more reliable connectivity.
 
 ## 📥 Installation
 
@@ -33,9 +34,11 @@ In SillyTavern:
 2. Paste the repository URL: `https://github.com/SpicyMarinara/SillyTavern-Lovense`
 3. Click **Install for all users/Install just for me**
 
-### 2. Add Server Plugin
+### 2. Add Server Plugin (Lovense Remote mode only)
 
 The extension needs a server-side proxy to communicate with Lovense Remote (to bypass browser CORS restrictions).
+
+**Skip this step if using Intiface mode** — Intiface connects directly from the browser via WebSocket and does not need a server plugin.
 
 **Step 1: Enable server plugins** in your `config.yaml`:
 ```yaml
@@ -128,11 +131,32 @@ See the [Setup](#setup) section below for PC or Mobile instructions.
 
 **If you see Status: Connected, you're good to go!**
 
+### Option 3: Intiface / Buttplug (No Lovense App Required)
+
+This mode connects to [Intiface Central](https://intiface.com/) (or any Buttplug server) instead of the Lovense Remote app. It supports Lovense devices and many other brands (We-Vibe, Kiiroo, etc.).
+
+1. Download and install **Intiface Central**:
+   - [Intiface Central Download](https://intiface.com/central/)
+
+2. Open Intiface Central and start the server (default WebSocket: `ws://localhost:12345`)
+
+3. In SillyTavern: **Extensions** → **Lovense Control**
+   - Select **Intiface / Buttplug** as the connection mode
+   - Click **Check Connection**
+
+4. Wait for your device to appear in Intiface Central and in the extension's Connected Toys list
+
+5. Toggle **Enable Lovense Control** in the extension menu
+
+**No server plugin is required for this mode.**
+
 ## ✨ How It Works
 
 ### AI Commands
 
 When enabled, the extension injects a system prompt that teaches the AI how to control your device. The AI uses XML-style tags in its responses that are automatically hidden by SillyTavern:
+
+Commands work in both **Lovense Remote** and **Intiface** modes. In Intiface mode, commands are mapped to the Buttplug protocol (vibrate → `VibrateCmd`, rotate → `RotateCmd`, stroke → `LinearCmd`).
 
 #### Basic Commands
 
@@ -206,13 +230,30 @@ All Lovense devices supported by the Lovense Remote app:
 
 ## � Troubleshooting
 
-### Extension UI does not appear / Settings panel is blank
+### Intiface Mode
+
+#### "Could not connect to Intiface"
+
+- Make sure **Intiface Central** is running and the server is started
+- Check that the WebSocket URL matches (default: `ws://localhost:12345`)
+- Ensure no firewall is blocking port 12345
+- Try restarting Intiface Central
+
+#### "Connected to Intiface but no devices found"
+
+- Make sure your device is paired/connected in Intiface Central first
+- Some devices require specific Bluetooth adapters — check Intiface documentation
+- Click **Check Connection** again after pairing the device in Intiface
+
+### Lovense Remote Mode
+
+#### Extension UI does not appear / Settings panel is blank
 
 **Cause:** The original code hardcoded the fetch path to `/scripts/extensions/third-party/SillyTavern-Lovense/settings.html`. If your extension folder is named anything else (e.g., a fork with `-d` suffix), this 404s and the UI never loads.
 
 **Fix (already applied in this fork):** The path is now resolved dynamically using `import.meta.url`. If you are using the original repo, rename your extension folder to exactly `SillyTavern-Lovense`, or switch to this fork.
 
-### "Check Connection" always fails even though Lovense Remote is running
+#### "Check Connection" always fails even though Lovense Remote is running
 
 **Cause:** The original code sent a `POST` request to `/command` with `command: 'GetToys'`. The Lovense Local API expects `GET /GetToys`, so the app rejects the request.
 
@@ -287,6 +328,8 @@ For developers and advanced users, see the [Lovense Standard API Documentation](
 - **Same Network Required (Mobile)**: When using mobile Lovense Remote, your phone and PC must be on the same WiFi network
 - **Local Connection Only**: Extension connects locally - no remote/internet control
 - **Single User**: Extension designed for single-user use
+
+**Note:** Intiface mode removes the "Same Network" and "Lovense App Required" limitations, as it connects directly to a local Buttplug server.
 
 ## 💖 Contributing
 

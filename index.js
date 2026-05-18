@@ -10,6 +10,9 @@ import {
 import {
     extension_settings,
 } from '../../../extensions.js';
+import {
+    ButtplugClient,
+} from './buttplug-client.js';
 
 const MODULE_NAME = 'lovense';
 const EXTENSION_PROMPT_TAG = 'lovense_control';
@@ -46,15 +49,21 @@ const TOY_CAPABILITIES = {
 // Settings with defaults
 const defaultSettings = {
     enabled: false,
+    mode: 'lovense-remote', // 'lovense-remote' or 'intiface'
     connected: false,
     toys: {},
     local_ip: '127.0.0.1',
     local_port: '30010',
+    intifaceUrl: 'ws://localhost:12345',
     guidelines: `1. Match intensity to context: gentle (1-10), moderate (11-15), intense (16-20)
 2. Use commands that fit the scene naturally
 3. Multiple commands per response allowed
 4. Commands loop until your next response`,
 };
+
+// Intiface / Buttplug state
+let bpClient = null;
+let bpDevices = {}; // Buttplug device index -> device info
 
 // Lovense API state
 let connectedToys = {};
@@ -100,16 +109,21 @@ function getLovenseProtocol(port) {
 }
 
 /**
- * Check connection to Lovense Remote
+ * Check connection to Lovense Remote or Intiface
  */
 async function checkConnection() {
     const settings = extension_settings[MODULE_NAME];
+
+    if (settings.mode === 'intiface') {
+        return checkIntifaceConnection();
+    }
+
+    // Legacy Lovense Remote mode
     const protocol = getLovenseProtocol(settings.local_port);
     const host = formatLovenseHost(settings.local_ip);
     const lovenseUrl = `${protocol}://${host}:${settings.local_port}/GetToys`;
 
     try {
-        // Use SillyTavern's proxy to avoid CORS issues with self-signed certificates
         const response = await fetch('/api/plugins/lovense/command', {
             method: 'POST',
             headers: getRequestHeaders(),
@@ -126,9 +140,6 @@ async function checkConnection() {
         const data = await response.json();
         console.log('[Lovense] Connection check response:', data);
 
-        // Lovense API error codes:
-        // 200 = Success, 401 = Toy Not Found, 402 = Toy Not Connected
-        // 500 = HTTP server not started, 400 = Invalid Command
         if (data.code === 200 && data.data && data.data.toys) {
             const toysData = typeof data.data.toys === 'string' ? JSON.parse(data.data.toys) : data.data.toys;
             connectedToys = toysData;
@@ -139,7 +150,6 @@ async function checkConnection() {
             updatePrompt();
             return true;
         } else if (data.code === 401) {
-            // 401 = Toy Not Found — app is reachable but no toy is paired
             console.log('[Lovense] App is reachable but no toy is paired/found');
             toastr.warning('Lovense app connected, but no toy found. Make sure your toy is paired in the Lovense Remote app.');
             settings.connected = false;
@@ -147,7 +157,6 @@ async function checkConnection() {
             updateConnectionStatus();
             return false;
         } else if (data.code === 402) {
-            // 402 = Toy Not Connected
             console.log('[Lovense] Toy found but not connected');
             toastr.warning('Toy found but not connected. Check the Bluetooth connection in the Lovense Remote app.');
             settings.connected = false;
@@ -168,7 +177,168 @@ async function checkConnection() {
         updateConnectionStatus();
         return false;
     }
-}/**
+}
+
+/**
+ * Connect to Intiface and scan for devices
+ */
+async function checkIntifaceConnection() {
+    const settings = extension_settings[MODULE_NAME];
+    const url = settings.intifaceUrl || 'ws://localhost:12345';
+
+    // Already connected?
+    if (bpClient && bpClient.connected) {
+        return true;
+    }
+
+    // Clean up any stale client
+    if (bpClient) {
+        bpClient.disconnect();
+        bpClient = null;
+    }
+
+    bpClient = new ButtplugClient('SillyTavern-Lovense');
+
+    bpClient.onDeviceAdded = (device) => {
+        console.log('[Intiface] Device added:', device.name, 'index:', device.index);
+        toastr.info(`Device connected: ${device.name}`);
+        settings.connected = true;
+        updateConnectionStatus();
+        updatePrompt();
+    };
+
+    bpClient.onDeviceRemoved = (device) => {
+        console.log('[Intiface] Device removed:', device.name);
+        toastr.info(`Device disconnected: ${device.name}`);
+        if (bpClient.devices.size === 0) {
+            settings.connected = false;
+        }
+        updateConnectionStatus();
+        updatePrompt();
+    };
+
+    bpClient.onError = (err) => {
+        console.error('[Intiface] Error:', err);
+    };
+
+    try {
+        toastr.info('Connecting to Intiface...');
+        await bpClient.connect(url);
+        console.log('[Intiface] Connected, starting scan...');
+        await bpClient.startScanning();
+
+        // Give scanning a moment, then check for devices
+        await new Promise(r => setTimeout(r, 1500));
+
+        if (bpClient.devices.size > 0) {
+            settings.connected = true;
+            toastr.success(`Connected to Intiface. ${bpClient.devices.size} device(s) found.`);
+        } else {
+            settings.connected = true; // Connected to server, waiting for device
+            toastr.info('Connected to Intiface. No devices found yet — make sure your device is paired in Intiface.');
+        }
+
+        updateConnectionStatus();
+        updatePrompt();
+        return true;
+    } catch (error) {
+        console.error('[Intiface] Connection failed:', error);
+        toastr.error(`Intiface connection failed: ${error.message}. Make sure Intiface Central is running.`);
+        settings.connected = false;
+        bpClient = null;
+        updateConnectionStatus();
+        return false;
+    }
+}
+
+/**
+ * Disconnect from Intiface
+ */
+function disconnectIntiface() {
+    if (bpClient) {
+        bpClient.disconnect();
+        bpClient = null;
+    }
+    bpDevices = {};
+    const settings = extension_settings[MODULE_NAME];
+    settings.connected = false;
+    updateConnectionStatus();
+    updatePrompt();
+}
+
+/**
+ * Send command via Intiface / Buttplug
+ */
+async function sendIntifaceCommand(command, silent = false) {
+    if (!bpClient || !bpClient.connected) {
+        console.warn('[Intiface] Not connected');
+        return false;
+    }
+
+    const devices = Array.from(bpClient.devices.values());
+    if (devices.length === 0) {
+        console.warn('[Intiface] No devices available');
+        return false;
+    }
+
+    try {
+        if (command.command === 'Function' && command.action === 'Stop') {
+            await bpClient.stopAll();
+            return true;
+        }
+
+        const actions = command.action.split(',');
+        const tasks = [];
+
+        for (const actionStr of actions) {
+            const [name, valueStr] = actionStr.split(':');
+            const nameLower = (name || '').toLowerCase().trim();
+            const value = parseFloat(valueStr);
+
+            if (nameLower === 'vibrate' || nameLower === 'all') {
+                const speed = Math.min(1, Math.max(0, value / 20));
+                for (const device of devices) {
+                    if (device.messageTypes?.VibrateCmd) {
+                        tasks.push(bpClient.vibrate(device.index, speed));
+                    }
+                }
+            } else if (nameLower === 'rotate') {
+                const speed = Math.min(1, Math.max(0, value / 20));
+                for (const device of devices) {
+                    if (device.messageTypes?.RotateCmd) {
+                        tasks.push(bpClient.rotate(device.index, speed));
+                    }
+                }
+            } else if (nameLower === 'pump' || nameLower === 'thrusting' || nameLower === 'fingering' || nameLower === 'suction' || nameLower === 'oscillate') {
+                const speed = Math.min(1, Math.max(0, value / 20));
+                for (const device of devices) {
+                    if (device.messageTypes?.VibrateCmd) {
+                        tasks.push(bpClient.vibrate(device.index, speed));
+                    }
+                }
+            } else if (nameLower === 'stroke') {
+                const durationMs = (command.timeSec || 1) * 1000;
+                const position = Math.min(1, Math.max(0, value / 100));
+                for (const device of devices) {
+                    if (device.messageTypes?.LinearCmd) {
+                        tasks.push(bpClient.linear(device.index, position, durationMs));
+                    }
+                }
+            }
+        }
+
+        await Promise.all(tasks);
+        return true;
+    } catch (error) {
+        if (!silent) {
+            console.error('[Intiface] Error sending command:', error);
+            toastr.error('Failed to send command via Intiface');
+        }
+        return false;
+    }
+}
+
+/**
  * Update connection status UI
  */
 function updateConnectionStatus() {
@@ -179,7 +349,40 @@ function updateConnectionStatus() {
     const toysSection = $('#lovense_toys_section');
     const testButtons = $('#lovense_test_controls button');
 
-    if (settings.connected && connectedToys && Object.keys(connectedToys).length > 0) {
+    if (!settings.connected) {
+        statusDiv.removeClass('connected').addClass('disconnected');
+        statusText.text('Not Connected');
+        toysSection.hide();
+        testButtons.prop('disabled', true);
+        return;
+    }
+
+    if (settings.mode === 'intiface') {
+        statusDiv.removeClass('disconnected').addClass('connected');
+        statusText.text('Connected (Intiface)');
+
+        const devices = bpClient ? Array.from(bpClient.devices.values()) : [];
+        toysList.empty();
+        if (devices.length > 0) {
+            for (const device of devices) {
+                const toyItem = $('<li class="lovense_toy_item"></li>');
+                toyItem.html(`
+                    <span class="lovense_toy_name">${device.name || 'Unknown Device'}</span>
+                    <span class="lovense_toy_battery">Index: ${device.index}</span>
+                `);
+                toysList.append(toyItem);
+            }
+            toysSection.show();
+            testButtons.prop('disabled', false);
+        } else {
+            toysSection.hide();
+            testButtons.prop('disabled', true);
+        }
+        return;
+    }
+
+    // Legacy Lovense Remote mode
+    if (connectedToys && Object.keys(connectedToys).length > 0) {
         statusDiv.removeClass('disconnected').addClass('connected');
         statusText.text('Connected');
 
@@ -212,6 +415,10 @@ async function sendLovenseCommand(command, trackAsLast = true, silent = false) {
     if (!settings.connected) {
         console.warn('[Lovense] Not connected to any device');
         return false;
+    }
+
+    if (settings.mode === 'intiface') {
+        return sendIntifaceCommand(command, silent);
     }
 
     try {
@@ -716,6 +923,12 @@ function onGenerationEnded() {
  * Generate dynamic prompt based on connected toys
  */
 function generateDynamicPrompt() {
+    const settings = extension_settings[MODULE_NAME];
+
+    if (settings.mode === 'intiface') {
+        return generateIntifacePrompt();
+    }
+
     if (!connectedToys || Object.keys(connectedToys).length === 0) {
         return '';
     }
@@ -824,6 +1037,59 @@ ${guidelines}
 }
 
 /**
+ * Generate dynamic prompt for Intiface mode
+ */
+function generateIntifacePrompt() {
+    if (!bpClient || bpClient.devices.size === 0) {
+        return '';
+    }
+
+    const settings = extension_settings[MODULE_NAME];
+    const devices = Array.from(bpClient.devices.values());
+    const deviceNames = devices.map(d => d.name || 'Unknown');
+
+    const capabilities = new Set(['vibrate']);
+    for (const device of devices) {
+        if (device.messageTypes?.RotateCmd) capabilities.add('rotate');
+        if (device.messageTypes?.LinearCmd) capabilities.add('stroke');
+    }
+
+    const capabilityDescriptions = {
+        'vibrate': '• Vibrate (0-20): ALL devices',
+        'rotate': '• Rotate (0-20): devices with rotation support',
+        'stroke': '• Stroke (0-100): devices with linear/stroking support',
+    };
+
+    const commandsText = Array.from(capabilities)
+        .map(cap => {
+            if (cap === 'vibrate') return '<lovense:vibrate="X" time="Y"/> - Vibrate at X (0-20) for Y seconds';
+            if (cap === 'rotate') return '<lovense:rotate="X" time="Y"/> - Rotate at X (0-20) for Y seconds';
+            if (cap === 'stroke') return '<lovense:stroke="X" time="Y"/> - Stroke at X (0-100) for Y seconds';
+            return '';
+        })
+        .filter(Boolean)
+        .join('\n');
+
+    const guidelines = settings.guidelines || defaultSettings.guidelines;
+
+    return `You can control the user's sex toy device(s) via Intiface during this conversation:
+<lovense>
+Connected devices: ${deviceNames.join(', ')}
+
+Capabilities:
+${Array.from(capabilities).map(cap => capabilityDescriptions[cap]).filter(Boolean).join('\n')}
+
+Commands (use self-closing XML-style tags):
+${commandsText}
+<lovense:all="X" time="Y"/> - Vibrate all devices at X (0-20) for Y seconds
+<lovense:stop/> - Stop all activity
+
+Guidelines:
+${guidelines}
+</lovense>`;
+}
+
+/**
  * Update the prompt injection
  */
 function updatePrompt() {
@@ -871,6 +1137,8 @@ function loadSettings() {
 
     // Restore settings to UI
     $('#lovense_enabled').prop('checked', settings.enabled);
+    $(`input[name="lovense_mode"][value="${settings.mode || 'lovense-remote'}"]`).prop('checked', true);
+    $('#lovense_intiface_url').val(settings.intifaceUrl || 'ws://localhost:12345');
     $('#lovense_local_ip').val(settings.local_ip || '127.0.0.1');
     $('#lovense_local_port').val(settings.local_port || '30010');
     $('#lovense_guidelines').val(settings.guidelines || defaultSettings.guidelines);
@@ -880,6 +1148,7 @@ function loadSettings() {
         connectedToys = settings.toys;
     }
 
+    updateConnectionVisibility();
     updateConnectionStatus();
     updatePrompt();
 }
@@ -899,7 +1168,35 @@ function setupUI() {
             startConnectionChecking();
         } else {
             stopConnectionChecking();
+            if (extension_settings[MODULE_NAME].mode === 'intiface') {
+                disconnectIntiface();
+            }
         }
+    });
+
+    // Mode selector
+    $('input[name="lovense_mode"]').on('change', function () {
+        const mode = $(this).val();
+        extension_settings[MODULE_NAME].mode = mode;
+        saveSettingsDebounced();
+
+        // Disconnect previous mode
+        if (mode === 'lovense-remote' && bpClient) {
+            disconnectIntiface();
+        } else if (mode === 'intiface') {
+            connectedToys = {};
+            extension_settings[MODULE_NAME].toys = {};
+        }
+
+        updateConnectionVisibility();
+        updateConnectionStatus();
+        updatePrompt();
+    });
+
+    // Intiface URL
+    $('#lovense_intiface_url').on('input', function () {
+        extension_settings[MODULE_NAME].intifaceUrl = $(this).val();
+        saveSettingsDebounced();
     });
 
     // Local IP/Port settings
@@ -931,17 +1228,39 @@ function setupUI() {
 
     // Connection
     $('#lovense_connect_button').on('click', async function () {
-        toastr.info('Checking connection to Lovense Remote...');
+        const mode = extension_settings[MODULE_NAME].mode;
+        if (mode === 'intiface') {
+            toastr.info('Connecting to Intiface...');
+        } else {
+            toastr.info('Checking connection to Lovense Remote...');
+        }
         const connected = await checkConnection();
         if (connected) {
-            toastr.success('Connected to Lovense device(s)!');
+            toastr.success(mode === 'intiface' ? 'Connected to Intiface!' : 'Connected to Lovense device(s)!');
         } else {
-            toastr.error('Could not connect. Make sure Lovense Remote is running and your device is paired.');
+            toastr.error(mode === 'intiface'
+                ? 'Could not connect to Intiface. Make sure Intiface Central is running.'
+                : 'Could not connect. Make sure Lovense Remote is running and your device is paired.');
         }
     });
 
     // Test controls
     $('#lovense_test_vibrate').on('click', async function () {
+        if (extension_settings[MODULE_NAME].mode === 'intiface') {
+            if (!bpClient || !bpClient.connected) return;
+            const devices = Array.from(bpClient.devices.values());
+            for (const device of devices) {
+                if (device.messageTypes?.VibrateCmd) {
+                    await bpClient.vibrate(device.index, 0.5);
+                }
+            }
+            setTimeout(async () => {
+                if (bpClient && bpClient.connected) await bpClient.stopAll();
+            }, 3000);
+            toastr.info('Sent vibrate test (3 seconds at 50%) via Intiface');
+            return;
+        }
+
         await sendLovenseCommand({
             command: 'Function',
             action: 'Vibrate:10',
@@ -971,6 +1290,22 @@ function setupUI() {
 
         toastr.success('All devices stopped and queue cleared');
     });
+}
+
+/**
+ * Update UI visibility based on selected mode
+ */
+function updateConnectionVisibility() {
+    const mode = extension_settings[MODULE_NAME].mode;
+    if (mode === 'intiface') {
+        $('#lovense_intiface_section').show();
+        $('#lovense_lovense_section').hide();
+        $('#lovense_setup_instructions').hide();
+    } else {
+        $('#lovense_intiface_section').hide();
+        $('#lovense_lovense_section').show();
+        $('#lovense_setup_instructions').show();
+    }
 }
 
 /**
