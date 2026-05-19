@@ -10,12 +10,22 @@ import {
 import {
     extension_settings,
 } from '../../../extensions.js';
-import {
-    ButtplugClient,
-} from './buttplug-client.js';
 
 const MODULE_NAME = 'lovense';
 const EXTENSION_PROMPT_TAG = 'lovense_control';
+
+// Dynamically import ButtplugClient so the main module still loads even if
+// buttplug-client.js is not yet available (e.g. old cached extension install).
+let ButtplugClient = null;
+async function loadButtplugClient() {
+    if (ButtplugClient) return;
+    try {
+        const mod = await import('./buttplug-client.js');
+        ButtplugClient = mod.ButtplugClient;
+    } catch (e) {
+        console.warn('[Lovense] buttplug-client.js not available:', e.message);
+    }
+}
 
 // Toy capability mappings
 const TOY_CAPABILITIES = {
@@ -197,6 +207,13 @@ async function checkIntifaceConnection() {
         bpClient = null;
     }
 
+    await loadButtplugClient();
+    if (!ButtplugClient) {
+        toastr.error('Buttplug client module not loaded. Try reinstalling the extension.');
+        settings.connected = false;
+        updateConnectionStatus();
+        return false;
+    }
     bpClient = new ButtplugClient('SillyTavern-Lovense');
 
     bpClient.onDeviceAdded = (device) => {
@@ -1342,11 +1359,26 @@ function stopConnectionChecking() {
  * Module initialization
  */
 jQuery(async () => {
+    // Pre-load optional Buttplug client module
+    try { await loadButtplugClient(); } catch (e) { /* ignore */ }
+
     // Load settings HTML manually since we're in data/default-user/extensions
-    const extensionPath = new URL('.', import.meta.url).pathname;
-    const settingsResponse = await fetch(`${extensionPath}settings.html`);
-    const settingsHtml = await settingsResponse.text();
-    $('#extensions_settings2').append(settingsHtml);
+    let settingsHtml = '';
+    try {
+        const extensionPath = new URL('.', import.meta.url).pathname;
+        const settingsResponse = await fetch(`${extensionPath}settings.html`);
+        if (settingsResponse.ok) {
+            settingsHtml = await settingsResponse.text();
+        } else {
+            console.error('[Lovense] Failed to load settings.html:', settingsResponse.status);
+        }
+    } catch (e) {
+        console.error('[Lovense] Error loading settings.html:', e);
+    }
+
+    if (settingsHtml) {
+        $('#extensions_settings2').append(settingsHtml);
+    }
 
     // Load settings
     loadSettings();
